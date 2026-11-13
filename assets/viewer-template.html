@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f8fafc;color:#172b43;font:14px system-ui,"Noto Sans CJK SC",sans-serif}header{padding:12px 18px;border-bottom:1px solid #ced9e4;background:#fff;display:flex;flex-wrap:wrap;align-items:center;gap:10px}h1{font-size:18px;margin:0 18px 0 0}button,select,input{font:inherit;padding:6px 10px;border:1px solid #b7c7d7;border-radius:5px;background:#fff;color:#172b43}button{cursor:pointer}button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #467aba}#hint{padding:7px 18px;background:#eef4fa;font-size:12px}#canvas{width:100%;height:calc(100dvh - 125px);min-height:360px;overflow:hidden;touch-action:none;cursor:grab}#canvas.dragging{cursor:grabbing}#canvas>svg{display:block;width:100%;height:100%;user-select:none}#canvas .node{cursor:pointer}#canvas .node.focused>path,#canvas .node.focused>polygon{stroke:#d32842;stroke-width:3px}#detail{position:fixed;right:16px;bottom:16px;max-width:min(650px,calc(100vw - 32px));max-height:50vh;overflow:auto;background:white;border:1px solid #a7b8cc;border-radius:8px;box-shadow:0 5px 24px #20365422;padding:18px;white-space:pre-wrap;line-height:1.7}#detail[hidden]{display:none}#close{float:right;margin-left:12px}#detailtext{margin:0;font:inherit}#status{font-variant-numeric:tabular-nums}#search{width:180px}@media(max-width:650px){h1{width:100%}#canvas{height:calc(100dvh - 185px)}}
+</style>
+<style>
+#canvas .edge{cursor:pointer}#canvas .edge .edge-hit{fill:none;stroke:transparent;stroke-width:16px;vector-effect:non-scaling-stroke;pointer-events:stroke}
+#canvas .edge.selected .edge-line{stroke:#d32842;stroke-width:4px;vector-effect:non-scaling-stroke}
+#canvas .edge.selected polygon{stroke:#d32842;fill:#d32842}
+#canvas .edge:hover .edge-line,#canvas .edge:focus-visible .edge-line{stroke:#d32842;stroke-width:3px;vector-effect:non-scaling-stroke}
+#canvas .node.source>path,#canvas .node.source>polygon{stroke:#176bc0;stroke-width:3px}
+#canvas .node.target>path,#canvas .node.target>polygon{stroke:#a244ae;stroke-width:3px}
+#wirepick{max-width:min(390px,90vw)}#detail{white-space:normal;width:590px}#detailtext{white-space:pre-wrap}#detailtext strong{display:block;margin-top:12px}#detailtext strong:first-child{margin-top:0}#detailtext p{margin:4px 0 8px}#detailtext button{margin-top:4px}#detailtext .pre{color:#176bc0}#detailtext .post{color:#a244ae}
+</style>
+<style>body{height:100dvh;display:flex;flex-direction:column;overflow:hidden}header,#hint{flex:none}#canvas{height:auto;min-height:0;flex:1}#detail a{overflow-wrap:anywhere;color:#245da1}#detailtext .source-list{font-size:12px;padding-left:18px}</style>
+<header><h1>__TITLE__</h1><button id="fit">全图</button><button id="minus" aria-label="缩小">−</button><span id="status">100%</span><button id="plus" aria-label="放大">＋</button><button id="actual">原始比例</button><select id="jump" aria-label="定位模块"><option value="">定位模块…</option></select><select id="wirepick" aria-label="选择连线"><option value="">选择连线…</option></select><input id="search" aria-label="搜索变量、开关或连线" placeholder="搜索变量 / 开关 / 连线"><button id="find">查找</button></header>
+<div id="hint">__PROVENANCE__ · 滚轮缩放 / 拖动平移 / 点击节点或连线查看尺寸、前后操作和源码依据 · Esc清除<br>__LEGEND__</div>
+<main id="canvas" aria-label="可缩放的单张完整网络结构图">__SVG__</main>
+<aside id="detail" aria-label="当前节点或连线详情" hidden><button id="close" aria-label="关闭详情并清除选择">关闭</button><div id="detailtext" aria-live="polite"></div></aside>
+<script type="application/json" id="graph-data">__GRAPH_DATA__</script>
+<script>
+const graphData=JSON.parse(document.getElementById('graph-data').textContent);
+const host=document.getElementById('canvas'),svg=host.querySelector('svg');
+const original=svg.viewBox.baseVal,full={x:original.x,y:original.y,w:original.width,h:original.height};
+let box={...full},drag=null,findIndex=0,lastSearch='';
+const nodes=[...svg.querySelectorAll('g.node')],clusters=[...svg.querySelectorAll('g.cluster')],edges=[...svg.querySelectorAll('g.edge')];
+const edgeById=new Map(graphData.edges.map(e=>[e.id,e])),wirepick=document.getElementById('wirepick');
+const detail=document.getElementById('detail'),detailtext=document.getElementById('detailtext');
+const status=document.getElementById('status');
+function draw(){svg.setAttribute('viewBox',`${box.x} ${box.y} ${box.w} ${box.h}`);status.textContent=Math.round(full.w/box.w*100)+'%';}
+function fit(){box={...full};draw();}
+function zoom(f,cx,cy){const p=point(cx??host.clientWidth/2,cy??host.clientHeight/2);const factor=Math.max(.015,Math.min(2.5,box.w*f/full.w))*full.w/box.w;box={x:p.x-(p.x-box.x)*factor,y:p.y-(p.y-box.y)*factor,w:box.w*factor,h:box.h*factor};draw();}
+function point(x,y){const p=svg.createSVGPoint();p.x=x+host.getBoundingClientRect().left;p.y=y+host.getBoundingClientRect().top;return p.matrixTransform(svg.getScreenCTM().inverse());}
+function focus(el){let b=el.getBBox();const data=edgeById.get(el.id);if(data){const boxes=[b,...[data.source,data.target].map(k=>document.getElementById(graphData.nodes[k].id).getBBox())];const x=Math.min(...boxes.map(v=>v.x)),y=Math.min(...boxes.map(v=>v.y));b={x,y,width:Math.max(...boxes.map(v=>v.x+v.width))-x,height:Math.max(...boxes.map(v=>v.y+v.height))-y};}const pad=el.classList.contains('node')?100:60;const p=svg.createSVGPoint();p.x=b.x;p.y=b.y;const q=p.matrixTransform(el.parentNode.getScreenCTM()).matrixTransform(svg.getScreenCTM().inverse());const ratio=host.clientWidth/host.clientHeight;let w=b.width+pad*2,h=b.height+pad*2;if(w/h<ratio)w=h*ratio;else h=w/ratio;box={x:q.x+b.width/2-w/2,y:q.y+b.height/2-h/2,w,h};draw();}
+function clearSelection(){nodes.forEach(n=>{n.classList.remove('focused','source','target');n.setAttribute('aria-pressed','false');});edges.forEach(e=>{e.classList.remove('selected');e.setAttribute('aria-pressed','false');});wirepick.value='';}
+function showNode(n){clearSelection();n.classList.add('focused');n.setAttribute('aria-pressed','true');detailtext.textContent=[...n.querySelectorAll('text')].map(t=>t.textContent).join('\n');const meta=Object.values(graphData.nodes).find(v=>v.id===n.id);appendSources(meta?.source_refs||[]);detail.hidden=false;}
+function section(title,text,kind){const h=document.createElement('strong');h.textContent=title;if(kind)h.className=kind;const p=document.createElement('p');p.textContent=text;detailtext.append(h,p);}
+function refKey(r){return r.path+':'+r.line+':'+(r.symbol||'');}
+function appendSources(refs){const unique=[...new Map(refs.map(r=>[r.url||refKey(r),r])).values()];if(!unique.length)return;const h=document.createElement('strong');h.textContent='源码依据（见审计记录）';detailtext.append(h);const ul=document.createElement('ul');ul.className='source-list';for(const ref of unique){const li=document.createElement('li'),a=document.createElement(ref.url?'a':'span');if(ref.url)a.href=ref.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=ref.path+':'+ref.line+(ref.symbol?' · '+ref.symbol:'');li.append(a);ul.append(li);}detailtext.append(ul);}
+function showEdge(el){const data=edgeById.get(el.id);if(!data)return;clearSelection();el.classList.add('selected');el.setAttribute('aria-pressed','true');wirepick.value=data.id;
+const before=graphData.nodes[data.source],after=graphData.nodes[data.target];
+document.getElementById(before.id).classList.add('source');document.getElementById(after.id).classList.add('target');detailtext.replaceChildren();
+section(`连线 ${data.id.slice(5)} · ${before.title} → ${after.title}`,data.relation);
+section('这条线代表什么',data.meaning+(data.label?'\n图中线标注：'+data.label:''));
+section('前置操作 · '+before.title,before.body,'pre');
+const goBefore=document.createElement('button');goBefore.textContent='定位前置模块';goBefore.onclick=()=>focus(document.getElementById(before.id));detailtext.append(goBefore);
+section('后置操作 · '+after.title,after.body,'post');
+const goAfter=document.createElement('button');goAfter.textContent='定位后置模块';goAfter.onclick=()=>focus(document.getElementById(after.id));detailtext.append(goAfter);appendSources(data.source_refs||[]);detail.hidden=false;}
+edges.forEach(el=>{const data=edgeById.get(el.id);if(!data)throw new Error('Missing edge metadata: '+el.id);
+const before=graphData.nodes[data.source],after=graphData.nodes[data.target];el.setAttribute('role','button');el.setAttribute('tabindex','0');el.setAttribute('aria-pressed','false');el.setAttribute('aria-label',`${before.title} → ${after.title}：${data.meaning}`);
+el.querySelector('title').textContent=`${before.title} → ${after.title}\n${data.meaning}`;
+[...el.querySelectorAll('path')].forEach(path=>{path.classList.add('edge-line');const hit=path.cloneNode(false);hit.removeAttribute('id');hit.removeAttribute('stroke-dasharray');hit.setAttribute('class','edge-hit');hit.setAttribute('aria-hidden','true');el.append(hit);});
+const option=document.createElement('option');option.value=data.id;option.textContent=`${data.id.slice(5)} · ${before.title} → ${after.title}`;wirepick.append(option);});
+nodes.forEach(n=>{n.setAttribute('role','button');n.setAttribute('tabindex','0');n.setAttribute('aria-pressed','false');n.setAttribute('aria-label',[...n.querySelectorAll('text')].map(t=>t.textContent).join(' '));});
+wirepick.onchange=()=>{const el=document.getElementById(wirepick.value);if(el){focus(el);showEdge(el);}};
+svg.addEventListener('keydown',e=>{const el=e.target.closest('g.edge,g.node');if(el&&(e.key==='Enter'||e.key===' ')){e.preventDefault();el.classList.contains('edge')?showEdge(el):showNode(el);}});
+clusters.forEach(c=>{const title=c.querySelector(':scope > text');if(!title)return;const o=document.createElement('option');o.value=c.id;o.textContent=title.textContent;document.getElementById('jump').append(o);});
+document.getElementById('jump').onchange=e=>{if(e.target.value)focus(document.getElementById(e.target.value));};
+document.getElementById('fit').onclick=fit;document.getElementById('plus').onclick=()=>zoom(.7);document.getElementById('minus').onclick=()=>zoom(1/.7);
+document.getElementById('actual').onclick=()=>{const r=host.clientWidth/host.clientHeight;box={x:box.x+box.w/2-host.clientWidth/2,y:box.y+box.h/2-host.clientWidth/r/2,w:host.clientWidth,h:host.clientWidth/r};draw();};
+document.getElementById('close').onclick=()=>{clearSelection();detail.hidden=true;};
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){clearSelection();detail.hidden=true;}});
+host.addEventListener('wheel',e=>{e.preventDefault();const r=host.getBoundingClientRect();zoom(Math.exp(e.deltaY*.001),e.clientX-r.left,e.clientY-r.top);},{passive:false});
+host.addEventListener('pointerdown',e=>{if(e.button!==0)return;drag={id:e.pointerId,x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,moved:false};host.setPointerCapture(e.pointerId);host.classList.add('dragging');});
+host.addEventListener('pointermove',e=>{if(!drag||drag.id!==e.pointerId)return;const p1=point(drag.x-host.getBoundingClientRect().left,drag.y-host.getBoundingClientRect().top),p2=point(e.clientX-host.getBoundingClientRect().left,e.clientY-host.getBoundingClientRect().top);if(Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)>3)drag.moved=true;box.x+=p1.x-p2.x;box.y+=p1.y-p2.y;drag.x=e.clientX;drag.y=e.clientY;draw();});
+host.addEventListener('pointerup',e=>{if(drag&&drag.id===e.pointerId&&!drag.moved){const el=document.elementFromPoint(e.clientX,e.clientY)?.closest('g.node,g.edge');if(el)el.classList.contains('edge')?showEdge(el):showNode(el);}drag=null;host.classList.remove('dragging');});
+host.addEventListener('pointercancel',()=>{drag=null;host.classList.remove('dragging');});
+function find(){const s=document.getElementById('search').value.trim().toLowerCase();if(!s)return;const matches=[...nodes,...edges].filter(n=>n.textContent.toLowerCase().includes(s));if(!matches.length){status.textContent='未找到';return;}if(lastSearch!==s)findIndex=0;lastSearch=s;const n=matches[findIndex++%matches.length];focus(n);n.classList.contains('edge')?showEdge(n):showNode(n);}
+document.getElementById('find').onclick=find;document.getElementById('search').onkeydown=e=>{if(e.key==='Enter')find();};draw();
+</script>
+</html>

@@ -1,0 +1,4 @@
+interface:
+  display_name: "源码网络结构图"
+  short_description: "从模型源码追踪输入尺寸和分支，绘制可交互的完整与纯推理结构图"
+  default_prompt: "使用 $model-architecture-diagrams 分析指定模型源码与配置，生成包含完整特征尺寸、可选分支和执行顺序的完整结构图与纯推理结构图。"
